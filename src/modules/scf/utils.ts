@@ -21,6 +21,7 @@ export const formatInputs = (inputs: ScfCreateFunctionInputs) => {
     },
     L5Enable: inputs.l5Enable === true ? 'TRUE' : 'FALSE',
     InstallDependency: inputs.installDependency === true ? 'TRUE' : 'FALSE',
+    DiskSize: +(inputs.diskSize || CONFIGS.defaultDiskSize),
   };
 
   if (inputs.nodeType) {
@@ -95,6 +96,24 @@ export const formatInputs = (inputs: ScfCreateFunctionInputs) => {
         protocolParams.WSParams = { IdleTimeOut: inputs.protocolParams?.wsParams?.idleTimeOut };
         functionInputs.ProtocolParams = protocolParams;
       }
+    }
+    // 仅web函数，支持单实例请求多并发,instanceConcurrencyEnable:true,启用多并发；instanceConcurrencyEnable:false,关闭多并发
+    // if (inputs.instanceConcurrencyEnable) {
+    if (inputs.instanceConcurrencyConfig) {
+      if (inputs.instanceConcurrencyConfig.enable) {
+        functionInputs.InstanceConcurrencyConfig = {
+          DynamicEnabled: inputs.instanceConcurrencyConfig.dynamicEnabled ? 'TRUE' : 'FALSE',
+          MaxConcurrency: inputs.instanceConcurrencyConfig.maxConcurrency || 2,
+        };
+      } else {
+        functionInputs.InstanceConcurrencyConfig = {
+          DynamicEnabled: '' as any,
+        };
+      }
+      console.log(
+        'functionInputs.instanceConcurrencyConfig:',
+        functionInputs.InstanceConcurrencyConfig,
+      );
     }
   }
 

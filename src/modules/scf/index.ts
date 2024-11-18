@@ -280,6 +280,36 @@ export default class Scf {
     const functionName = inputs.name;
     const { ignoreTriggers = false } = inputs;
 
+    if (
+      inputs.instanceConcurrencyConfig?.enable &&
+      (inputs.instanceConcurrencyConfig?.maxConcurrency < 2 ||
+        inputs.instanceConcurrencyConfig?.maxConcurrency > 100)
+    ) {
+      throw new ApiTypeError('PARAMETER_SCF', 'maxConcurrency is between 2 and 100');
+    }
+
+    if (inputs?.aliasName) {
+      if (!inputs?.additionalVersionWeights) {
+        throw new ApiTypeError(
+          'PARAMETER_SCF',
+          'additionalVersionWeights is required when aliasName is setted',
+        );
+      }
+      if (!inputs?.aliasFunctionVersion) {
+        throw new ApiTypeError(
+          'PARAMETER_SCF',
+          'aliasFunctionVersion is required when aliasName is setted',
+        );
+      }
+    } else {
+      if (inputs?.additionalVersionWeights || inputs?.aliasFunctionVersion) {
+        throw new ApiTypeError(
+          'PARAMETER_SCF',
+          'aliasName is required when additionalVersionWeights or aliasFunctionVersion is setted',
+        );
+      }
+    }
+
     // 在部署前，检查函数初始状态，如果初始为 CreateFailed，尝试先删除，再重新创建
     let funcInfo = await this.scf.getInitialStatus({ namespace, functionName });
 
@@ -321,13 +351,10 @@ export default class Scf {
       });
     }
 
-    const aliasAddionalVersion = inputs.aliasAddionalVersion || inputs.lastVersion;
-    const needSetTraffic =
-      inputs.traffic != null && aliasAddionalVersion && aliasAddionalVersion !== '$LATEST';
-    const needSetAlias = (inputs.aliasName && inputs.aliasName !== '$DEFAULT') || needSetTraffic;
-    if (needSetAlias) {
-      let needCreateAlias = false;
-      if (inputs.aliasName && inputs.aliasName !== '$DEFAULT') {
+    // 检测配置的别名是否存在，不存在就创建，存在的话就设置流量
+    let needCreateAlias = false;
+    if (inputs.aliasName) {
+      if (inputs.aliasName !== '$DEFAULT') {
         try {
           const aliasInfo = await this.alias.get({
             namespace,
@@ -347,32 +374,33 @@ export default class Scf {
           }
         }
       }
-      if (needCreateAlias) {
-        await this.alias.create({
-          namespace,
-          functionName,
-          functionVersion: inputs.aliasFunctionVersion || funcInfo?.Qualifier,
-          aliasName: inputs.aliasName!,
-          lastVersion: aliasAddionalVersion!,
-          traffic: inputs.traffic!,
-          description: inputs.aliasDescription,
-        });
-      } else {
-        await this.alias.update({
-          namespace,
-          functionName,
-          functionVersion: inputs.aliasFunctionVersion || funcInfo?.Qualifier,
-          additionalVersions: needSetTraffic
-            ? [{ weight: strip(1 - inputs.traffic!), version: aliasAddionalVersion! }]
-            : [],
-          region: this.region,
-          aliasName: inputs.aliasName,
-          description: inputs.aliasDescription,
-        });
+      try {
+        // 创建别名
+        if (needCreateAlias) {
+          await this.alias.create({
+            namespace,
+            functionName,
+            functionVersion: inputs.aliasFunctionVersion || funcInfo?.Qualifier,
+            aliasName: inputs.aliasName!,
+            description: inputs.aliasDescription,
+            additionalVersions: inputs.additionalVersionWeights,
+          });
+        } else {
+          // 更新别名
+          await this.alias.update({
+            namespace,
+            functionName,
+            functionVersion: inputs.aliasFunctionVersion || funcInfo?.Qualifier,
+            additionalVersions: inputs.additionalVersionWeights,
+            region: this.region,
+            aliasName: inputs.aliasName,
+            description: inputs.aliasDescription,
+          });
+        }
+      } catch (error) {
+        const errorType = needCreateAlias ? 'CREATE_ALIAS_SCF' : 'UPDATE_ALIAS_SCF';
+        throw new ApiTypeError(errorType, error.message);
       }
-
-      outputs.Traffic = inputs.traffic;
-      outputs.ConfigTrafficVersion = inputs.lastVersion;
     }
 
     // get default alias
